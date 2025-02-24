@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Royal Enfield - Carrera Moto</title>
+    
+    <!-- React y ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts y dependencias -->
+    <script src="https://unpkg.com/recharts@2.5.0/umd/Recharts.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+    <!-- Google Sheets API -->
+    <script src="https://apis.google.com/js/api.js"></script>
+    
+    <style>
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            visibility: hidden;
+        }
+        .loading-spinner {
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+    
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Destructuring de los componentes de React y Recharts
+        const { useState, useEffect } = React;
+        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line, ReferenceLine, PieChart, Pie, Cell, ResponsiveContainer } = Recharts;
+
+        // Configuración de Google Sheets API
+        const SHEET_ID = 'TU_ID_DE_HOJA_DE_CALCULO'; // Reemplazar con el ID de tu hoja de cálculo
+        const API_KEY = 'TU_API_KEY'; // Reemplazar con tu API key de Google
+
+        // Rangos de datos en Google Sheets
+        const VENTAS_RANGE = 'DatosVentas!A2:D8'; // Ajusta según tu estructura
+        const SERVICIO_RANGE = 'DatosServicio!A2:C8'; // Ajusta según tu estructura
+        const KPIS_RANGE = 'KPIs!A2:C5'; // Ajusta según tu estructura
+        const MODELOS_RANGE = 'Modelos!A2:B6'; // Ajusta según tu estructura
+
+        const DashboardRE = () => {
+            // Estado para almacenar los datos
+            const [datosVentas, setDatosVentas] = useState([
+                { mes: 'Ene', demos: 90, solicitudes: 90, visitas: 92 },
+                { mes: 'Feb', demos: 95, solicitudes: 100, visitas: 103 },
+                { mes: 'Mar', demos: 105, solicitudes: 110, visitas: 97 },
+                { mes: 'Abr', demos: 92, solicitudes: 95, visitas: 108 },
+                { mes: 'May', demos: 100, solicitudes: 105, visitas: 100 },
+                { mes: 'Jun', demos: 102, solicitudes: 100, visitas: 105 }
+            ]);
+
+            const [datosServicio, setDatosServicio] = useState([
+                { mes: 'Ene', servicios: 91, satisfaccion: 92 },
+                { mes: 'Feb', servicios: 109, satisfaccion: 95 },
+                { mes: 'Mar', servicios: 97, satisfaccion: 94 },
+                { mes: 'Abr', servicios: 103, satisfaccion: 96 },
+                { mes: 'May', servicios: 100, satisfaccion: 93 },
+                { mes: 'Jun', servicios: 103, satisfaccion: 96 }
+            ]);
+
+            const [kpis, setKpis] = useState({
+                demos: 82,
+                demosObjetivo: 80,
+                satisfaccion: 96,
+                satisfaccionObjetivo: 95,
+                resenas: 4,
+                resenasObjetivo: 4
+            });
+
+            const [datosModelos, setDatosModelos] = useState([
+                { name: 'Himalayan', value: 40 },
+                { name: 'Classic 350', value: 30 },
+                { name: 'Continental GT', value: 15 },
+                { name: 'Interceptor', value: 15 }
+            ]);
+
+            const [lastUpdated, setLastUpdated] = useState('');
+            const [loadingData, setLoadingData] = useState(false);
+            
+            // Función para mostrar/ocultar indicador de carga
+            const toggleLoading = (show) => {
+                const overlay = document.getElementById('loading-overlay');
+                if (overlay) {
+                    overlay.style.visibility = show ? 'visible' : 'hidden';
+                }
+            };
+
+            // Efecto para inicializar Google Sheets API
+            useEffect(() => {
+                // Función para inicializar la API
+                const initGoogleSheetsAPI = () => {
+                    toggleLoading(true);
+                    gapi.load('client', async () => {
+                        try {
+                            await gapi.client.init({
+                                apiKey: API_KEY,
+                                discoveryDocs: ['https://sheets.googleapis.com/$discovery/rest?version=v4'],
+                            });
+                            console.log('API de Google Sheets inicializada correctamente');
+                            loadAllData();
+                        } catch (error) {
+                            console.error('Error al inicializar la API de Google Sheets:', error);
+                            toggleLoading(false);
+                        }
+                    });
+                };
+
+                // Exponer funciones globalmente para actualizar datos
+                window.updateDashboardState = (ventasData, servicioData, kpisData, modelosData) => {
+                    setDatosVentas(ventasData);
+                    setDatosServicio(servicioData);
+                    setKpis(kpisData);
+                    setDatosModelos(modelosData);
+                    setLastUpdated(new Date().toLocaleString());
+                    toggleLoading(false);
+                };
+                
+                window.reloadDashboardData = () => {
+                    loadAllData();
+                };
+
+                // Cargar datos al iniciar
+                if (API_KEY !== 'TU_API_KEY' && SHEET_ID !== 'TU_ID_DE_HOJA_DE_CALCULO') {
+                    initGoogleSheetsAPI();
+                } else {
+                    console.log('Usando datos de demostración. Configura API_KEY y SHEET_ID para datos reales.');
+                    setLastUpdated('Datos de demostración');
+                }
+                
+                // Función para cargar todos los datos
+                async function loadAllData() {
+                    toggleLoading(true);
+                    try {
+                        const ventasResponse = await gapi.client.sheets.spreadsheets.values.get({
+                            spreadsheetId: SHEET_ID,
+                            range: VENTAS_RANGE
+                        });
+                        const servicioResponse = await gapi.client.sheets.spreadsheets.values.get({
+                            spreadsheetId: SHEET_ID,
+                            range: SERVICIO_RANGE
+                        });
+                        const kpisResponse = await gapi.client.sheets.spreadsheets.values.get({
+                            spreadsheetId: SHEET_ID,
+                            range: KPIS_RANGE
+                        });
+                        const modelosResponse = await gapi.client.sheets.spreadsheets.values.get({
+                            spreadsheetId: SHEET_ID,
+                            range: MODELOS_RANGE
+                        });
+                        
+                        // Procesar datos de ventas
+                        const ventasData = ventasResponse.result.values.map(row => ({
+                            mes: row[0],
+                            demos: parseFloat(row[1]),
+                            solicitudes: parseFloat(row[2]),
+                            visitas: parseFloat(row[3])
+                        }));
+                        
+                        // Procesar datos de servicio
+                        const servicioData = servicioResponse.result.values.map(row => ({
+                            mes: row[0],
+                            servicios: parseFloat(row[1]),
+                            satisfaccion: parseFloat(row[2])
+                        }));
+                        
+                        // Procesar KPIs
+                        const kpisData = {
+                            demos: parseFloat(kpisResponse.result.values[0][1]),
+                            demosObjetivo: parseFloat(kpisResponse.result.values[0][2]),
+                            satisfaccion: parseFloat(kpisResponse.result.values[1][1]),
+                            satisfaccionObjetivo: parseFloat(kpisResponse.result.values[1][2]),
+                            resenas: parseFloat(kpisResponse.result.values[2][1]),
+                            resenasObjetivo: parseFloat(kpisResponse.result.values[2][2])
+                        };
+                        
+                        // Procesar datos de modelos
+                        const modelosData = modelosResponse.result.values.map(row => ({
+                            name: row[0],
+                            value: parseFloat(row[1])
+                        }));
+                        
+                        // Actualizar el estado
+                        setDatosVentas(ventasData);
+                        setDatosServicio(servicioData);
+                        setKpis(kpisData);
+                        setDatosModelos(modelosData);
+                        setLastUpdated(new Date().toLocaleString());
+                        
+                        console.log('Datos cargados correctamente');
+                    } catch (error) {
+                        console.error('Error al cargar los datos:', error);
+                    } finally {
+                        toggleLoading(false);
+                    }
+                }
+            }, []);
+
+            // Función para calcular porcentaje de cumplimiento
+            const calcularPorcentaje = (actual, objetivo) => {
+                return ((actual / objetivo) * 100 - 100).toFixed(1);
+            };
+
+            // Colores para la gráfica de pastel
+            const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+
+            return (
+                <div className="p-4 md:p-8 max-w-7xl mx-auto">
+                    {/* Header del Dashboard */}
+                    <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                        <div className="flex flex-col md:flex-row justify-between items-center">
+                            <div>
+                                <h1 className="text-2xl md:text-3xl font-bold text-blue-600 mb-2">
+                                    Dashboard Royal Enfield
+                                </h1>
+                                <p className="text-gray-600">
+                                    Métricas y KPIs - Febrero 2025
+                                </p>
+                            </div>
+                            <div className="mt-4 md:mt-0 flex items-center">
+                                <button 
+                                    onClick={() => window.reloadDashboardData()} 
+                                    className="mr-4 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+                                >
+                                    Actualizar Datos
+                                </button>
+                                <img src="https://www.royalenfield.com/content/dam/royal-enfield/india/logos/logo.svg" alt="Royal Enfield Logo" className="h-12" />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Panel de KPIs */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h3 className="font-bold text-gray-700">Demos del Mes</h3>
+                            <p className="text-2xl font-bold text-blue-600">{kpis.demos}</p>
+                            <p className={`text-sm ${parseFloat(calcularPorcentaje(kpis.demos, kpis.demosObjetivo)) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {calcularPorcentaje(kpis.demos, kpis.demosObjetivo)}% vs objetivo
+                            </p>
+                            <div className="w-full bg-gray-200 rounded-full h-2.5 mt-2">
+                                <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${Math.min((kpis.demos / kpis.demosObjetivo) * 100, 100)}%` }}></div>
+                            </div>
+                        </div>
+                        
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h3 className="font-bold text-gray-700">Satisfacción CTA</h3>
+                            <p className="text-2xl font-bold text-blue-600">{kpis.satisfaccion}%</p>
+                            <p className={`text-sm ${parseFloat(calcularPorcentaje(kpis.satisfaccion, kpis.satisfaccionObjetivo)) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {calcularPorcentaje(kpis.satisfaccion, kpis.satisfaccionObjetivo)}% vs objetivo
+                            </p>
+                            <div className="w-full bg-gray-200 rounded-full h-2.5 mt-2">
+                                <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${Math.min((kpis.satisfaccion / kpis.satisfaccionObjetivo) * 100, 100)}%` }}></div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h3 className="font-bold text-gray-700">Reseñas 5★</h3>
+                            <p className="text-2xl font-bold text-blue-600">{kpis.resenas}</p>
+                            <p className={`text-sm ${kpis.resenas >= kpis.resenasObjetivo ? 'text-green-600' : 'text-red-600'}`}>
+                                {kpis.resenas >= kpis.resenasObjetivo ? 'Meta cumplida' : `${kpis.resenas}/${kpis.resenasObjetivo}`}
+                            </p>
+                            <div className="w-full bg-gray-200 rounded-full h-2.5 mt-2">
+                                <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${Math.min((kpis.resenas / kpis.resenasObjetivo) * 100, 100)}%` }}></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Objetivos Estratégicos */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div className="bg-blue-50 rounded-lg shadow-lg p-6">
+                            <h2 className="text-xl font-bold text-blue-800 mb-4">Motos Nuevas - Visión 2029</h2>
+                            <p className="font-bold mb-4 text-blue-900">TRANSMITIR LA EXPERIENCIA DE VIVIR EL MOTOCICLISMO PURO</p>
+                            <div className="bg-white rounded p-4 mb-4">
+                                <p className="font-bold text-blue-900 mb-2">Objetivo 2025:</p>
+                                <p className="text-blue-800 mb-4">230 nuevos motociclistas</p>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between">
+                                        <span>Demos Mensuales</span>
+                                        <span className="font-bold">{kpis.demos}/{kpis.demosObjetivo}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Solicitudes Autorizadas</span>
+                                        <span className="font-bold">20/20</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Visitas Contables</span>
+                                        <span className="font-bold">63/60</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-green-50 rounded-lg shadow-lg p-6">
+                            <h2 className="text-xl font-bold text-green-800 mb-4">Servicio - Visión 2029</h2>
+                            <p className="font-bold mb-4 text-green-900">SER LA MEJOR OPCIÓN Y EL MEJOR ALIADO EN EL MUNDO DEL MOTOCICLISMO</p>
+                            <div className="bg-white rounded p-4 mb-4">
+                                <p className="font-bold text-green-900 mb-2">Objetivo 2025:</p>
+                                <p className="text-green-800 mb-4">70 clientes mensuales satisfechos</p>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between">
+                                        <span>Servicios Mensuales</span>
+                                        <span className="font-bold">72/70</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Satisfacción CTA</span>
+                                        <span className="font-bold">{kpis.satisfaccion}%/{kpis.satisfaccionObjetivo}%</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Reseñas 5★ Mensuales</span>
+                                        <span className="font-bold">{kpis.resenas}/{kpis.resenasObjetivo}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Gráficas de Seguimiento */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                        {/* Primera gráfica: Porcentaje de Logro Mensual */}
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h2 className="text-xl font-bold text-gray-800 mb-4">Porcentaje de Logro Mensual</h2>
+                            <div className="w-full h-64">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={datosVentas}>
+                                        <CartesianGrid strokeDasharray="3 3" />
+                                        <XAxis dataKey="mes" />
+                                        <YAxis domain={[0, 120]} />
+                                        <Tooltip formatter={(value) => `${value}%`} />
+                                        <Legend />
+                                        <ReferenceLine y={100} stroke="#666" strokeDasharray="3 3" label="Meta" />
+                                        <Bar dataKey="demos" fill="#0088FE" name="Demos %" />
+                                        <Bar dataKey="solicitudes" fill="#00C49F" name="Solicitudes %" />
+                                        <Bar dataKey="visitas" fill="#FFBB28" name="Visitas %" />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* Segunda gráfica: Servicios y Satisfacción Mensual */}
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h2 className="text-xl font-bold text-gray-800 mb-4">Servicios y Satisfacción Mensual</h2>
+                            <div className="w-full h-64">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={datosServicio}>
+                                        <CartesianGrid strokeDasharray="3 3" />
+                                        <XAxis dataKey="mes" />
+                                        <YAxis yAxisId="left" />
+                                        <YAxis yAxisId="right" orientation="right" />
+                                        <Tooltip />
+                                        <Legend />
+                                        <Line 
+                                            yAxisId="left" 
+                                            type="monotone" 
+                                            dataKey="servicios" 
+                                            stroke="#0088FE" 
+                                            name="Servicios %" 
+                                        />
+                                        <Line 
+                                            yAxisId="right" 
+                                            type="monotone" 
+                                            dataKey="satisfaccion" 
+                                            stroke="#00C49F" 
+                                            name="Satisfacción %" 
+                                        />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Nueva sección: Distribución de Ventas y Acciones Recomendadas */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                        {/* Gráfica de pastel: Distribución de Ventas por Modelo */}
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h2 className="text-xl font-bold text-gray-800 mb-4">Distribución de Ventas por Modelo</h2>
+                            <div className="w-full h-64">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={datosModelos}
+                                            cx="50%"
+                                            cy="50%"
+                                            labelLine={false}
+                                            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                                            outerRadius={80}
+                                            fill="#8884d8"
+                                            dataKey="value"
+                                        >
+                                            {datosModelos.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* Tarjeta de Acciones Recomendadas */}
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            <h2 className="text-xl font-bold text-gray-800 mb-4">Acciones Recomendadas</h2>
+                            <div className="space-y-4">
+                                <div className="p-3 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                    <h3 className="font-bold text-blue-800">Demos</h3>
+                                    <p className="text-blue-700">Continuar con la estrategia actual, demos superando objetivo.</p>
+                                </div>
+                                <div className="p-3 bg-green-50 rounded-lg border-l-4 border-green-500">
+                                    <h3 className="font-bold text-green-800">CTA</h3>
+                                    <p className="text-green-700">Mantener enfoque en calidad, tiempo y atención en servicio.</p>
+                                </div>
+                                <div className="p-3 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
+                                    <h3 className="font-bold text-yellow-800">Café</h3>
+                                    <p className="text-yellow-700">Organizar evento mensual para convertir "curiosos" en potenciales clientes.</p>
+                                </div>
+                                <div className="p-3 bg-purple-50 rounded-lg border-l-4 border-purple-500">
+                                    <h3 className="font-bold text-purple-800">Apparel</h3>
+                                    <p className="text-purple-700">Acelerar lanzamiento de tienda online para segundo trimestre.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Footer con información de actualización */}
+                    <div className="bg-white rounded-lg shadow-lg p-4 text-center text-gray-600">
+                        <p>Dashboard actualizado: {lastUpdated || "24 de febrero de 2025"}</p>
+                        <p className="text-sm mt-1">"Nos mueve la libertad, la autenticidad y los amigos."</p>
+                    </div>
+                </div>
+            );
+        };
+
+        // Renderizar la aplicación
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<DashboardRE />);
+    </script>
+</body>
+</html>
